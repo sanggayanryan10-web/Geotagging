@@ -779,4 +779,435 @@ function drawOverlay(ctx, W, H) {
     textX = pad + (s.logoSide === 'left' && logo ? logoCol : 0); textTop = thumbH + pad;
   } else {
     colW = cardW - 2 * pad - logoCol; lay = layoutText(ctx, colW, fs, L);
-    cardW = Math.min(cardW, textWidth(ctx, lay.items) + 2 * pad + logoCol + 
+    cardW = Math.min(cardW, textWidth(ctx, lay.items) + 2 * pad + logoCol + fs * 0.4);
+    colW = cardW - 2 * pad - logoCol; lay = layoutText(ctx, colW, fs, L);
+    cardH = Math.max(lay.h, logoH) + 2 * pad;
+    textX = pad + (s.logoSide === 'left' && logo ? logoCol : 0); textTop = pad;
+  }
+
+  // position
+  let x, y;
+  if (s.custom) { x = clamp(s.custom.x * W, 0, Math.max(0, W - cardW)); y = clamp(s.custom.y * H, 0, Math.max(0, H - cardH)); }
+  else { x = s.pos.includes('left') ? margin : W - cardW - margin; y = s.pos.includes('top') ? margin : H - cardH - margin; }
+
+  // card background
+  roundRectPath(ctx, x, y, cardW, cardH, s.radius * u); ctx.clip();
+  ctx.globalAlpha = s.opacity / 100; ctx.fillStyle = s.bg; ctx.fillRect(x, y, cardW, cardH); ctx.globalAlpha = 1;
+  // map thumbnail
+  if (thumb) {
+    if (tpl === 'gps') ctx.drawImage(thumb, x, y, M, Math.min(M, cardH));
+    else ctx.drawImage(thumb, x, y, cardW, thumbH);
+  }
+  // text
+  ctx.textBaseline = 'middle'; ctx.fillStyle = s.color;
+  lay.items.forEach(it => {
+    ctx.font = it.font; ctx.globalAlpha = it.alpha;
+    it.lines.forEach((ln, i) => {
+      const cy = y + textTop + it.y + (i + 0.5) * it.lh;
+      ctx.fillText(ln, x + textX + it.indent, cy);
+      if (i === 0 && it.icon) drawIcon(ctx, it.icon, x + textX + it.size * 0.55, cy, it.size * 1.05, s.color);
+    });
+  });
+  ctx.globalAlpha = 1;
+  // logo
+  if (logo) {
+    const lx = s.logoSide === 'left' ? x + (tpl === 'gps' && M ? M + pad : pad) : x + cardW - pad - logoW;
+    const ly = y + (tpl === 'map' ? thumbH + pad : pad);
+    ctx.drawImage(logo.img, lx, ly, logoW, logoH);
+  }
+  ctx.restore();
+  return { x: x / W, y: y / H, w: cardW / W, h: cardH / H };
+}
+
+/* ==========================================================================
+   7. GOOGLE MAPS (JS API, Geocoder, Static Maps thumbnail)
+   ========================================================================== */
+const MapMod = {
+  key: '', ready: false, map: null, marker: null, geocoder: null, loadingP: null,
+  load(key) {
+    key = (key || '').trim();
+    if (!key) { toast('Enter an API key first.', 'warn'); return Promise.resolve(false); }
+    if (this.ready) return Promise.resolve(true);
+    if (this.loadingP) return this.loadingP;
+    this.key = key; $('#keyBtn').disabled = true; $('#keyBtn').textContent = 'Loading…';
+    this.loadingP = new Promise(resolve => {
+      window.__gmReady = () => resolve(true);
+      window.gm_authFailure = () => { toast('Google rejected the API key. Check the key, enabled APIs and referrer restrictions.', 'error', 9000); };
+      const sc = document.createElement('script');
+      sc.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places&callback=__gmReady&v=weekly`;
+      sc.async = true; sc.onerror = () => resolve(false); document.head.appendChild(sc);
+      setTimeout(() => resolve(false), 15000);
+    }).then(ok => {
+      this.loadingP = null; $('#keyBtn').disabled = false; $('#keyBtn').textContent = 'Load map';
+      if (!ok || !window.google || !google.maps) { this.key = ''; toast('Could not load Google Maps. Check your connection and key.', 'error', 7000); return false; }
+      this.init(); return true;
+    });
+    return this.loadingP;
+  },
+  init() {
+    this.ready = true; $('#mapOff').hidden = true; $('#mapOn').hidden = false;
+    if ($('#keyRemember').checked) { try { localStorage.setItem('geotag.gmKey', this.key); } catch {} }
+    const ll = getLL();
+    this.map = new google.maps.Map($('#map'), { center: ll || { lat: 20, lng: 0 }, zoom: ll ? 16 : 2, streetViewControl: false, fullscreenControl: false, mapTypeControl: false, gestureHandling: 'greedy' });
+    this.marker = new google.maps.Marker({ map: this.map, position: ll || undefined, visible: !!ll, draggable: true });
+    this.geocoder = new google.maps.Geocoder();
+    this.map.addListener('click', e => this.pick(e.latLng, 'map'));
+    this.marker.addListener('dragend', e => this.pick(e.latLng, 'map', $('#autoAddr').checked));
+    this.initSearch();
+    $('#mapSec').addEventListener('toggle', () => { if ($('#mapSec').open) google.maps.event.trigger(this.map, 'resize'); });
+    render();
+  },
+  /** user clicked / dragged: set coordinates */
+  pick(latLng, source, lookup = false) {
+    state.data.lat = latLng.lat().toFixed(6); state.data.lng = latLng.lng().toFixed(6); markSource('coords', source);
+    this.marker.setPosition(latLng); this.marker.setVisible(true);
+    syncUI(); render(); History.commit();
+    if (lookup) this.reverse();
+  },
+  syncFromFields: debounce(function () {
+    const m = MapMod; if (!m.ready) return; const ll = getLL();
+    if (!ll) { m.marker.setVisible(false); return; }
+    m.marker.setPosition(ll); m.marker.setVisible(true); m.map.panTo(ll); if (m.map.getZoom() < 14) m.map.setZoom(16);
+  }, 350),
+  reverse() {
+    const ll = getLL();
+    if (!this.ready) { toast('Address lookup needs a Google Maps key. Add one in the Map section.', 'warn'); return; }
+    if (!ll) { toast('Enter valid coordinates first.', 'warn'); return; }
+    this.geocoder.geocode({ location: ll }, (res, status) => {
+      if (status !== 'OK' || !res || !res[0]) { toast('No address found (' + status + '). Make sure the Geocoding API is enabled for your key.', 'warn', 7000); return; }
+      this.applyPlace({ components: res[0].address_components.map(c => ({ long: c.long_name, types: c.types })), formatted: res[0].formatted_address }, 'map');
+    });
+  },
+  /** Fill ONLY empty address fields, or replace after explicit confirmation. */
+  applyPlace(p, source) {
+    const find = (...ts) => { for (const t of ts) { const c = p.components.find(c => c.types.includes(t)); if (c) return c.long; } return ''; };
+    const street = [find('street_number'), find('route')].filter(Boolean).join(' ') || find('premise', 'establishment', 'point_of_interest');
+    const fill = {
+      street, barangay: find('sublocality_level_1', 'sublocality', 'neighborhood'),
+      city: find('locality', 'administrative_area_level_3'), province: find('administrative_area_level_2', 'administrative_area_level_1'),
+      country: find('country')
+    };
+    const d = state.data, anyFilled = GROUP_FIELDS.addr.some(f => d[f].trim());
+    const differs = GROUP_FIELDS.addr.some(f => fill[f] && d[f].trim() && d[f].trim() !== fill[f]);
+    let overwrite = false;
+    if (anyFilled && differs) overwrite = confirm('Replace your existing address fields with the address from the map? (Cancel keeps your text and only fills empty fields.)');
+    let changed = false;
+    GROUP_FIELDS.addr.forEach(f => { if (fill[f] && (overwrite || !d[f].trim())) { d[f] = fill[f]; changed = true; } });
+    if (changed) markSource('addr', source);
+    if (p.name && !d.name.trim()) { d.name = p.name; markSource('name', source); }
+    syncUI(); render(); History.commit();
+    toast(changed ? 'Address filled from Google. Please check it.' : 'Your existing address text was kept.', changed ? 'ok' : 'info');
+  },
+  async initSearch() {
+    const input = $('#mapSearch');
+    const normalizeNew = async place => {
+      await place.fetchFields({ fields: ['displayName', 'formattedAddress', 'location', 'addressComponents'] });
+      return { ll: place.location, name: place.displayName, formatted: place.formattedAddress, components: (place.addressComponents || []).map(c => ({ long: c.longText, types: c.types })) };
+    };
+    const handle = async n => {
+      if (!n || !n.ll) return; this.pick(n.ll, 'search'); this.map.panTo(n.ll); this.map.setZoom(17);
+      this.applyPlace({ components: n.components, formatted: n.formatted, name: n.name && n.name !== n.formatted ? n.name : '' }, 'search');
+    };
+    try {                                                       // Preferred: the current Places UI element
+      const { PlaceAutocompleteElement } = await google.maps.importLibrary('places');
+      const pac = new PlaceAutocompleteElement(); pac.style.colorScheme = 'light'; pac.style.width = '100%';
+      $('#pacHost').prepend(pac); input.closest('.row2').hidden = true; this.pac = pac;
+      pac.addEventListener('gmp-select', async e => handle(await normalizeNew(e.placePrediction.toPlace())));
+      pac.addEventListener('gmp-placeselect', async e => handle(await normalizeNew(e.place)));
+      return;
+    } catch (_) { /* fall through to legacy */ }
+    try {                                                       // Fallback: legacy Autocomplete widget
+      const ac = new google.maps.places.Autocomplete(input, { fields: ['geometry', 'name', 'formatted_address', 'address_components'] });
+      ac.addListener('place_changed', () => { const p = ac.getPlace(); if (!p.geometry) return;
+        handle({ ll: p.geometry.location, name: p.name, formatted: p.formatted_address, components: (p.address_components || []).map(c => ({ long: c.long_name, types: c.types })) }); });
+    } catch (_) { /* geocoder-only search still works */ }
+  },
+  search(q) {                                                   // Geocoding API search (Enter / Search button)
+    q = (q || '').trim(); if (!q || !this.ready) return;
+    this.geocoder.geocode({ address: q }, (res, status) => {
+      if (status !== 'OK' || !res[0]) { toast('Nothing found for “' + q + '” (' + status + ').', 'warn'); return; }
+      const r = res[0];
+      this.pick(r.geometry.location, 'search'); this.map.panTo(r.geometry.location); this.map.setZoom(17);
+      this.applyPlace({ components: r.address_components.map(c => ({ long: c.long_name, types: c.types })), formatted: r.formatted_address }, 'search');
+    });
+  }
+};
+
+/** Static Maps thumbnail loader (documented, approved method). Requests are debounced to avoid needless billing. */
+const Thumb = {
+  cache: new Map(), want: null, timer: 0, warned: false,
+  url(kind) {
+    const s = state.style, ll = getLL(); if (!ll || !MapMod.key || !s.showMap) return null;
+    const [w, h] = kind === 'wide' ? [640, 256] : [640, 640], p = `${ll.lat.toFixed(6)},${ll.lng.toFixed(6)}`;
+    return `https://maps.googleapis.com/maps/api/staticmap?center=${p}&zoom=${s.mapZoom}&size=${w}x${h}&scale=2&maptype=${s.mapType}&markers=color:red%7C${p}&key=${encodeURIComponent(MapMod.key)}`;
+  },
+  get(kind) {
+    const url = this.url(kind); if (!url) return null;
+    const e = this.cache.get(url);
+    if (e) return e.status === 'ok' ? e.img : null;
+    this.want = url; clearTimeout(this.timer); this.timer = setTimeout(() => this.start(url), 700);
+    return null;
+  },
+  start(url) {
+    if (this.cache.has(url)) return this.cache.get(url).promise;
+    if (this.cache.size > 20) this.cache.delete(this.cache.keys().next().value);
+    const e = { status: 'loading', img: new Image() };
+    e.promise = new Promise(res => {
+      e.img.crossOrigin = 'anonymous';
+      e.img.onload = () => { e.status = 'ok'; render(); res(); };
+      e.img.onerror = () => { e.status = 'error'; if (!this.warned) { this.warned = true; toast('The map thumbnail could not load. Enable the “Maps Static API” for your key.', 'warn', 8000); } render(); res(); };
+    });
+    e.img.src = url; this.cache.set(url, e); return e.promise;
+  },
+  async flush() { clearTimeout(this.timer); if (this.want) await this.start(this.want); }
+};
+
+/* ==========================================================================
+   8. EXPORT & DOWNLOAD
+   ========================================================================== */
+let expUrl = null, expBlob = null, expName = '';
+function baseName() { return (state.file ? state.file.name.replace(/\.[^.]+$/, '') : 'photo').replace(/[^\w\-. ]+/g, '_').slice(0, 80); }
+async function buildExport() {
+  const fmt = $('#expFmt').value, sc = Number($('#expScale').value) / 100, q = Number($('#expQ').value) / 100;
+  await Thumb.flush();
+  const base = Base.get(), W = Math.max(1, Math.round(base.width * sc)), H = Math.max(1, Math.round(base.height * sc));
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d'); if (!ctx) throw new Error('canvas');
+  if (fmt === 'jpg') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); }       // JPEG has no transparency
+  paintComposite(ctx, base, W, H, true);
+  const mime = fmt === 'png' ? 'image/png' : 'image/jpeg';
+  const blob = await new Promise((res, rej) => { try { c.toBlob(b => b ? res(b) : rej(new Error('blob')), mime, q); } catch (e) { rej(e); } });
+  return { blob, W, H, fmt };
+}
+async function openExport() {
+  if (!state.img) return;
+  if (!state.rect && !confirm('The overlay is empty (no location details). Export the photo anyway?')) return;
+  loading(true, 'Rendering image…');
+  try {
+    const r = await buildExport();
+    closeExportUrl(); expBlob = r.blob; expUrl = URL.createObjectURL(r.blob);
+    expName = `${baseName()}_geotag.${r.fmt}`;
+    $('#expImg').src = expUrl;
+    $('#expMeta').textContent = `${expName} · ${r.W}×${r.H}px · ${fmtBytes(r.blob.size)}`;
+    const w = [];
+    if (r.fmt === 'jpg') w.push('JPG is lossy: quality settings below 100% discard some detail.');
+    else w.push('PNG is lossless but files can be much larger than JPG.');
+    w.push('This is an edited copy. Original EXIF metadata (camera, original GPS, timestamps) is not carried over, and this app does not write new EXIF.');
+    w.push('The overlay shows information as entered. It is not verified GPS or timestamp evidence.');
+    if (Number($('#expScale').value) < 100) w.push('The image was resized, so it is smaller than the original.');
+    $('#expWarn').innerHTML = ''; w.forEach(t => { const li = document.createElement('li'); li.textContent = t; $('#expWarn').appendChild(li); });
+    $('#exportDlg').showModal();
+  } catch (e) {
+    toast(e && e.name === 'SecurityError' ? 'The map thumbnail blocks export in this browser. Turn off “map thumbnail” and try again.' :
+      'Export failed. The image may be too large for this browser; try a smaller size.', 'error', 8000);
+  } finally { loading(false); }
+}
+function closeExportUrl() { if (expUrl) { URL.revokeObjectURL(expUrl); expUrl = null; } expBlob = null; $('#expImg').removeAttribute('src'); }
+function downloadBlobUrl(url, name) { const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+
+/* ==========================================================================
+   9. UI WIRING
+   ========================================================================== */
+// ---- generated style controls ----
+const rng = (k, l, min, max, step, unit = '') => `<label class="rng"><span>${l} <output data-unit="${unit}"></output></span><input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}"></label>`;
+const sel = (k, l, o) => `<label class="fld"><span>${l}</span><select data-k="${k}">${o.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select></label>`;
+const chk = (k, l) => `<label class="chk"><input type="checkbox" data-k="${k}"> ${l}</label>`;
+const col = (k, l) => `<label class="fld"><span>${l}</span><input type="color" data-k="${k}"></label>`;
+$('#styleBody').innerHTML =
+  sel('style.font', 'Font', [[DEFAULT_STYLE.font, 'System sans'], ["Arial, Helvetica, sans-serif", 'Arial'], ["Verdana, Geneva, sans-serif", 'Verdana'], ["'Trebuchet MS', sans-serif", 'Trebuchet'], ["Georgia, serif", 'Georgia'], ["'Courier New', monospace", 'Courier New']]) +
+  rng('style.size', 'Font size', 12, 44, 1) + `<div class="row2">${col('style.color', 'Text color')}${col('style.bg', 'Background color')}</div>` +
+  rng('style.opacity', 'Background opacity', 0, 100, 1, '%') + rng('style.radius', 'Corner radius', 0, 60, 1) +
+  rng('style.padding', 'Padding', 6, 50, 1) + rng('style.lineSpacing', 'Line spacing', 1, 2, 0.05) +
+  rng('style.width', 'Overlay width', 30, 100, 1, '%') + rng('style.margin', 'Outer margin', 0, 80, 1) +
+  `<div class="row2">${sel('style.dateFormat', 'Date format', [['mdy', 'Oct 21, 2026'], ['dmy', '21 Oct 2026'], ['iso', '2026-10-21'], ['num', '10/21/2026'], ['long', 'Wednesday, October 21, 2026']])}` +
+  `${sel('style.timeFormat', 'Time format', [['12', '3:42 PM'], ['24', '15:42']])}</div>` +
+  `<div class="row2">${sel('style.coordFormat', 'Coordinate format', [['both', 'Decimal + DMS'], ['dec', 'Decimal'], ['dms', 'Degrees-min-sec']])}` + rng('style.precision', 'Precision (decimals)', 0, 8, 1) + `</div>` +
+  `<div class="row2">${chk('style.showIcon', 'Show icons')}${chk('style.showMap', 'Show map thumbnail')}</div>` +
+  `<div class="row2">${rng('style.mapZoom', 'Thumbnail zoom', 10, 20, 1)}${sel('style.mapType', 'Thumbnail type', [['roadmap', 'Map'], ['satellite', 'Satellite'], ['hybrid', 'Hybrid']])}</div>` +
+  `<div class="hint">The map thumbnail needs a Google Maps key (Static Maps API). Without one, the card is drawn without a map.</div>`;
+
+// time-zone list
+(function () {
+  const sel = $('#tzSel'); sel.innerHTML = '<option value="">Not shown</option>';
+  let zones = []; try { zones = Intl.supportedValuesOf('timeZone'); } catch { zones = ['UTC', 'Asia/Manila', 'Asia/Taipei', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney', 'Europe/London', 'America/New_York', 'America/Los_Angeles']; }
+  zones.forEach(z => { const o = document.createElement('option'); o.value = z; o.textContent = z.replace(/_/g, ' '); sel.appendChild(o); });
+})();
+
+function updateBadges() {
+  $$('[data-badge]').forEach(b => { const s = state.src[b.dataset.badge]; b.textContent = SRC_BADGE[s]; b.className = 'badge ' + s; });
+}
+function syncUI() {
+  $$('[data-k]').forEach(el => {
+    const v = getPath(state, el.dataset.k);
+    if (el.type === 'checkbox') el.checked = !!v; else el.value = v ?? '';
+    const o = el.type === 'range' && el.closest('label') ? el.closest('label').querySelector('output') : null;
+    if (o) o.textContent = el.value + (o.dataset.unit || '');
+  });
+  updateBadges();
+  $('#coordErr').textContent = coordError();
+  $$('.tpl').forEach(b => b.setAttribute('aria-pressed', b.dataset.tpl === state.style.template));
+  $$('.pos button').forEach(b => b.setAttribute('aria-pressed', !state.style.custom && b.dataset.pos === state.style.pos));
+  const has = !!state.img;
+  ['exportBtn', 'exportBtn2', 'dlOriginal'].forEach(id => $('#' + id).disabled = !has);
+  $('#exifBtn').disabled = !(state.exif && !state.exif.none);
+  $('#logoRemove').disabled = !state.logo;
+  $('#mapTypeBtn').setAttribute('aria-pressed', state.style.mapType !== 'roadmap');
+  History.updateButtons();
+}
+function onField(el) {
+  const k = el.dataset.k; let v;
+  if (el.type === 'checkbox') v = el.checked; else if (el.type === 'range') v = Number(el.value); else v = el.value;
+  if (k === 'data.lat' && typeof v === 'string' && v.includes(',')) {          // allow pasting "lat, lng"
+    const [a, b] = v.split(','); state.data.lat = a.trim(); state.data.lng = (b || '').trim(); $('[data-k="data.lng"]').value = state.data.lng; el.value = state.data.lat;
+  } else setPath(state, k, v);
+  if (k.startsWith('data.')) { const f = k.slice(5); if (FIELD_GROUP[f]) markSource(FIELD_GROUP[f], 'manual'); if (f === 'lat') markSource('coords', 'manual'); }
+  if (k.startsWith('edit.')) Base.dirty();
+  if (k === 'style.mapType') $('#mapTypeBtn').setAttribute('aria-pressed', v !== 'roadmap');
+  const o = el.type === 'range' && el.closest('label') ? el.closest('label').querySelector('output') : null;
+  if (o) o.textContent = el.value + (o.dataset.unit || '');
+  updateBadges(); $('#coordErr').textContent = coordError();
+  if (k === 'data.lat' || k === 'data.lng') MapMod.syncFromFields();
+  render();
+}
+$$('[data-k]').forEach(el => { el.addEventListener('input', () => onField(el)); el.addEventListener('change', () => History.commit()); });
+
+// upload
+const fileInput = $('#fileInput');
+['openBtn', 'emptyBtn'].forEach(id => $('#' + id).addEventListener('click', () => fileInput.click()));
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); fileInput.value = ''; });
+const stage = $('#stage');
+['dragenter', 'dragover'].forEach(ev => stage.addEventListener(ev, e => { e.preventDefault(); stage.classList.add('dragover'); }));
+['dragleave', 'drop'].forEach(ev => stage.addEventListener(ev, e => { e.preventDefault(); stage.classList.remove('dragover'); }));
+stage.addEventListener('drop', e => { const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) loadFile(f); });
+window.addEventListener('dragover', e => e.preventDefault()); window.addEventListener('drop', e => e.preventDefault());
+
+// zoom
+const setZoom = z => { state.zoom = clamp(z, 0.25, 12); render(); };
+$('#zFit').onclick = () => setZoom(1);
+$('#zIn').onclick = () => setZoom(state.zoom * 1.25);
+$('#zOut').onclick = () => setZoom(state.zoom / 1.25);
+$('#z11').onclick = () => { const b = Base.get(); if (!b) return; const fitW = parseFloat($('#view').style.width) / state.zoom; setZoom(b.width / fitW / 1); };
+window.addEventListener('resize', debounce(render, 120));
+
+// rotate / crop / compare
+const rotate = d => { if (!state.img) return; state.edit.rot = (state.edit.rot + d + 4) % 4; state.style.custom = null; Base.dirty(); render(); History.commit(); syncUI(); };
+$('#rotL').onclick = () => rotate(-1); $('#rotR').onclick = () => rotate(1);
+$('#cropBtn').onclick = e => { const o = $('#cropbar').classList.toggle('open'); e.currentTarget.setAttribute('aria-pressed', o); render(); };
+$('#cmpBtn').onclick = e => { state.showOriginal = !state.showOriginal; e.currentTarget.setAttribute('aria-pressed', state.showOriginal); render(); };
+
+// templates / positions
+$$('.tpl').forEach(b => b.onclick = () => { state.style.template = b.dataset.tpl; syncUI(); render(); History.commit(); });
+$$('.pos button').forEach(b => b.onclick = () => { state.style.pos = b.dataset.pos; state.style.custom = null; syncUI(); render(); History.commit(); });
+
+// dragging the overlay
+(function () {
+  const box = $('#box'); let drag = null;
+  box.addEventListener('pointerdown', e => { if (!state.rect) return; box.setPointerCapture(e.pointerId); drag = { sx: e.clientX, sy: e.clientY, x: state.rect.x, y: state.rect.y }; });
+  box.addEventListener('pointermove', e => {
+    if (!drag || !state.rect) return; const r = $('#view').getBoundingClientRect();
+    state.style.custom = { x: clamp(drag.x + (e.clientX - drag.sx) / r.width, 0, Math.max(0, 1 - state.rect.w)), y: clamp(drag.y + (e.clientY - drag.sy) / r.height, 0, Math.max(0, 1 - state.rect.h)) };
+    render();
+  });
+  const end = () => { if (drag) { drag = null; syncUI(); History.commit(); } };
+  box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
+  box.addEventListener('keydown', e => {
+    const step = e.shiftKey ? 0.05 : 0.01, m = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+    if (!m || !state.rect) return; e.preventDefault();
+    const c = state.style.custom || { x: state.rect.x, y: state.rect.y };
+    state.style.custom = { x: clamp(c.x + m[0], 0, Math.max(0, 1 - state.rect.w)), y: clamp(c.y + m[1], 0, Math.max(0, 1 - state.rect.h)) };
+    render(); syncUI(); History.commit();
+  });
+})();
+
+// coordinate helpers
+$('#copyCoords').onclick = async () => {
+  const ll = getLL(); if (!ll) { toast('Enter valid coordinates first.', 'warn'); return; }
+  const t = `${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}`;
+  try { await navigator.clipboard.writeText(t); toast('Copied ' + t, 'ok', 2500); } catch { prompt('Copy these coordinates:', t); }
+};
+$('#useDevice').onclick = () => {
+  if (!navigator.geolocation) { toast('This browser cannot provide device location.', 'warn'); return; }
+  loading(true, 'Waiting for location permission…');
+  navigator.geolocation.getCurrentPosition(p => {
+    loading(false);
+    state.data.lat = p.coords.latitude.toFixed(6); state.data.lng = p.coords.longitude.toFixed(6); markSource('coords', 'device');
+    syncUI(); render(); History.commit(); MapMod.syncFromFields();
+    toast(`Device location set (accuracy ±${Math.round(p.coords.accuracy)} m). This is where you are now, not necessarily where the photo was taken.`, 'ok', 8000);
+  }, err => { loading(false); toast(err.code === 1 ? 'Location permission was denied.' : 'Could not get your location.', 'warn'); }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+};
+$('#goSearch').onclick = () => {
+  $('#mapSec').open = true; $('#mapSec').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (!MapMod.ready) { $('#keyInput').focus(); toast('Map search needs a Google Maps key.', 'info'); return; }
+  (MapMod.pac || $('#mapSearch')).focus();
+};
+$('#getAddr').onclick = () => MapMod.reverse();
+$('#nowBtn').onclick = () => {
+  const n = new Date(), p = x => String(x).padStart(2, '0');
+  state.data.date = `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())}`; state.data.time = `${p(n.getHours())}:${p(n.getMinutes())}`;
+  markSource('dt', 'manual'); syncUI(); render(); History.commit();
+  toast('Filled from this device’s clock. Only use this if it matches when the photo was taken.', 'info', 6000);
+};
+$('#exifBtn').onclick = applyExif;
+$('#clearDataBtn').onclick = () => {
+  if (!confirm('Clear all location, coordinate, date and time fields?')) return;
+  Object.keys(state.data).forEach(k => state.data[k] = ''); Object.keys(state.src).forEach(k => state.src[k] = 'none');
+  syncUI(); render(); History.commit(); MapMod.syncFromFields();
+};
+
+// map key / search
+$('#keyBtn').onclick = () => MapMod.load($('#keyInput').value);
+$('#keyInput').addEventListener('keydown', e => { if (e.key === 'Enter') MapMod.load($('#keyInput').value); });
+$('#mapSearchBtn').onclick = () => MapMod.search($('#mapSearch').value);
+$('#mapSearch').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); MapMod.search($('#mapSearch').value); } });
+$('#mapTypeBtn').onclick = e => {
+  const sat = state.style.mapType === 'roadmap'; state.style.mapType = sat ? 'hybrid' : 'roadmap';
+  if (MapMod.ready) MapMod.map.setMapTypeId(sat ? 'hybrid' : 'roadmap');
+  syncUI(); render(); History.commit(); e.currentTarget.textContent = sat ? 'Road map view' : 'Satellite view';
+};
+
+// logo
+$('#logoBtn').onclick = () => $('#logoInput').click();
+$('#logoInput').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  if (!/^image\//.test(f.type) || f.size > 8 * 1024 * 1024) { toast('Choose an image under 8 MB.', 'warn'); return; }
+  const url = URL.createObjectURL(f), im = new Image();
+  im.onload = () => { state.logo = { img: im, ratio: (im.naturalHeight || 1) / (im.naturalWidth || 1) }; state.style.logoOn = true; URL.revokeObjectURL(url); syncUI(); render(); History.commit(); };
+  im.onerror = () => { URL.revokeObjectURL(url); toast('That logo could not be read.', 'error'); };
+  im.src = url;
+});
+$('#logoRemove').onclick = () => { state.logo = null; state.style.logoOn = false; syncUI(); render(); History.commit(); };
+
+// export
+$('#exportBtn').onclick = openExport; $('#exportBtn2').onclick = openExport;
+$('#expFmt').onchange = () => { $('#expQ').disabled = $('#expFmt').value === 'png'; };
+$('#expQ').oninput = () => { $('#expQOut').textContent = $('#expQ').value + '%'; };
+$('#expDownload').onclick = () => { if (expUrl) downloadBlobUrl(expUrl, expName); };
+$('#expClose').onclick = () => $('#exportDlg').close();
+$('#exportDlg').addEventListener('close', closeExportUrl);
+$('#dlOriginal').onclick = () => { if (!state.file) return; const u = URL.createObjectURL(state.file); downloadBlobUrl(u, state.file.name); setTimeout(() => URL.revokeObjectURL(u), 4000); };
+
+// header buttons & keyboard
+$('#undoBtn').onclick = () => History.undo(); $('#redoBtn').onclick = () => History.redo();
+$('#resetBtn').onclick = () => { if (!confirm('Reset overlay style, rotation and crop to defaults? Your entered details are kept.')) return;
+  state.style = { ...DEFAULT_STYLE }; state.edit = { ...DEFAULT_EDIT }; state.zoom = 1; Base.dirty(); syncUI(); render(); History.commit(); };
+$('#helpBtn').onclick = () => $('#helpDlg').showModal(); $('#helpClose').onclick = () => $('#helpDlg').close();
+document.addEventListener('keydown', e => {
+  const t = e.target.tagName; if (/INPUT|SELECT|TEXTAREA/.test(t) && e.target.type !== 'range') return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? History.redo() : History.undo(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); History.redo(); }
+});
+window.addEventListener('beforeunload', () => { closeExportUrl(); });
+
+/* ==========================================================================
+   10. START-UP
+   ========================================================================== */
+syncUI(); History.commit();
+(function initKey() {
+  let key = (window.GEOTAG_CONFIG && window.GEOTAG_CONFIG.googleMapsApiKey) || '';
+  if (!key) { try { key = localStorage.getItem('geotag.gmKey') || ''; if (key) $('#keyRemember').checked = true; } catch {} }
+  if (key) { $('#keyInput').value = key; MapMod.load(key); }
+})();
+})();
+</script>
+</body>
+</html>
