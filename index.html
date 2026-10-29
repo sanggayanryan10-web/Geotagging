@@ -16,6 +16,7 @@
   --ok:#34d399; --warn:#fbbf24; --err:#f87171; --r:16px;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{margin:0;height:100%}
 body{
   font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; color:var(--text);
@@ -92,13 +93,15 @@ output{color:var(--text);font-variant-numeric:tabular-nums}
 .btnrow{display:flex;flex-wrap:wrap;gap:6px}
 #map{height:270px;border-radius:12px;border:1px solid var(--line);overflow:hidden;background:#0a1630}
 #mapOff{padding:10px;border-radius:12px;background:#ffffff0a;border:1px dashed var(--line)}
-.tpls{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.tpls{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .tpl{border:1px solid var(--line);background:var(--glass);border-radius:12px;padding:8px;cursor:pointer;text-align:center;font-size:13px}
 .tpl[aria-pressed=true]{border-color:var(--blue2);background:#2563eb33}
 .tpl i{display:block;height:34px;border-radius:6px;background:#ffffff1c;margin-bottom:6px;position:relative}
 .tpl i::before{content:"";position:absolute;left:6px;right:6px;bottom:6px;height:12px;border-radius:4px;background:#7db2ff}
 .tpl[data-tpl=map] i::before{height:20px}
 .tpl[data-tpl=minimal] i::before{right:50%;height:9px}
+.tpl[data-tpl=cam] i::before{left:34%;height:14px}
+.tpl[data-tpl=cam] i::after{content:"";position:absolute;left:6px;bottom:6px;width:20%;height:14px;border-radius:4px;background:#34d399}
 .pos{display:grid;grid-template-columns:repeat(2,64px);gap:6px}
 .pos button{height:34px;border-radius:8px;border:1px solid var(--line);background:var(--glass);cursor:pointer}
 .pos button[aria-pressed=true]{background:#2563eb;border-color:var(--blue2)}
@@ -287,7 +290,8 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
       <summary>🪪 Overlay template &amp; position</summary>
       <div class="body">
         <div class="tpls" role="group" aria-label="Overlay template">
-          <button class="tpl" data-tpl="gps" aria-pressed="true"><i></i>GPS Camera</button>
+          <button class="tpl" data-tpl="cam" aria-pressed="true"><i></i>Camera Tab</button>
+          <button class="tpl" data-tpl="gps" aria-pressed="false"><i></i>GPS Camera</button>
           <button class="tpl" data-tpl="map" aria-pressed="false"><i></i>Map Card</button>
           <button class="tpl" data-tpl="minimal" aria-pressed="false"><i></i>Minimal</button>
         </div>
@@ -320,6 +324,30 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
         <label class="rng"><span>Logo size <output data-unit="%"></output></span><input type="range" data-k="style.logoSize" min="5" max="40" step="1"></label>
         <label class="fld"><span>Logo side</span><select data-k="style.logoSide"><option value="right">Right of text</option><option value="left">Left of text</option></select></label>
         <div class="hint">The logo sits in its own space inside the card, so it never covers the text.</div>
+      </div>
+    </details>
+
+    <details class="sec" open id="docSec">
+      <summary>📄 Word document (A4)</summary>
+      <div class="body">
+        <label class="chk"><input type="checkbox" id="docHead" checked> Include 2-line heading on every page</label>
+        <div id="docHeadFields" class="body" style="padding:0">
+          <label class="fld"><span>Heading line 1</span><input type="text" id="docH1" placeholder="e.g. DOCUMENTATION OF CAPACITY BUILDING ACTIVITY" autocomplete="off"></label>
+          <label class="fld"><span>Heading line 2</span><input type="text" id="docH2" placeholder="e.g. October 21, 2026 · Municipal Hall, Kauswagan, Lanao del Norte" autocomplete="off"></label>
+        </div>
+        <div class="row2">
+          <label class="fld"><span>Photos per page</span>
+            <select id="docPer"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
+          <label class="fld"><span>Columns</span>
+            <select id="docCols"><option value="auto">Automatic</option><option value="1">1 (stacked)</option><option value="2">2 (side by side)</option></select></label>
+        </div>
+        <div class="btnrow">
+          <button class="btn" id="docAdd" disabled title="Add the photo currently shown, with its overlay, to the Word document">＋ Add current photo</button>
+          <span class="badge" id="docCount" style="align-self:center">0 / 5 photos</span>
+        </div>
+        <div id="docList" style="display:grid;gap:6px"></div>
+        <div class="hint">A document holds up to 5 photos (COA limit). Load a photo, fill in its details, then add it; repeat for the next one. Each photo is added exactly as shown in the preview.</div>
+        <button class="btn primary" id="docGen" disabled>Download Word document (.docx)</button>
       </div>
     </details>
 
@@ -384,6 +412,8 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
 <script src="config.js" onerror="void 0"></script>
 <!-- Free map for picking coordinates (Leaflet + OpenStreetMap), used when no Google key is set -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" onerror="void 0"></script>
+<!-- Word (.docx) writer, runs in the browser -->
+<script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js" onerror="void 0"></script>
 <!-- EXIF reading library (loaded from a CDN; the app still works without it) -->
 <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js" onerror="void 0"></script>
 
@@ -411,10 +441,11 @@ function loading(on, text) { $('#loading').classList.toggle('on', on); if (text)
    1. STATE & DEFAULTS
    ========================================================================== */
 const DEFAULT_STYLE = {
-  template: 'gps', pos: 'bottom-left', custom: null,
+  template: 'cam', pos: 'bottom-left', custom: null,
+  tabText: 'Geotag Camera', showTab: true, showFlag: true,
   font: "system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif",
-  size: 22, color: '#ffffff', bg: '#0b1b3a', opacity: 80, radius: 18, padding: 20,
-  lineSpacing: 1.3, width: 94, margin: 14,
+  size: 22, color: '#ffffff', bg: '#1c1e21', opacity: 82, radius: 12, padding: 20,
+  lineSpacing: 1.3, width: 92, margin: 14,
   showIcon: true, showMap: true, showTag: true,
   dateFormat: 'mdy', timeFormat: '12', coordFormat: 'both', precision: 5,
   mapZoom: 17, mapType: 'satellite',
@@ -760,10 +791,99 @@ function layoutText(ctx, colW, fs, L) {
 }
 function textWidth(ctx, items) { let m = 0; items.forEach(it => { ctx.font = it.font; it.lines.forEach(l => { m = Math.max(m, it.indent + ctx.measureText(l).width); }); }); return m; }
 
+/** Draws the Philippine flag (vector, no emoji font needed). */
+function drawFlag(ctx, x, y, w, h) {
+  ctx.save(); roundRectPath(ctx, x, y, w, h, h * 0.12); ctx.clip();
+  ctx.fillStyle = '#0038a8'; ctx.fillRect(x, y, w, h / 2);
+  ctx.fillStyle = '#ce1126'; ctx.fillRect(x, y + h / 2, w, h / 2 + 1);
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + h * 0.9, y + h / 2); ctx.lineTo(x, y + h); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = ctx.strokeStyle = '#fcd116';
+  const sx = x + h * 0.3, sy = y + h / 2, r = h * 0.1;
+  ctx.beginPath(); ctx.arc(sx, sy, r, 0, 7); ctx.fill();
+  ctx.lineWidth = Math.max(0.6, h * 0.03);
+  for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; ctx.beginPath(); ctx.moveTo(sx + Math.cos(a) * r * 1.3, sy + Math.sin(a) * r * 1.3); ctx.lineTo(sx + Math.cos(a) * r * 2, sy + Math.sin(a) * r * 2); ctx.stroke(); }
+  const star = (cx, cy, R) => { ctx.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? R * 0.4 : R; ctx.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); } ctx.closePath(); ctx.fill(); };
+  star(x + h * 0.1, y + h * 0.17, h * 0.085); star(x + h * 0.1, y + h * 0.83, h * 0.085); star(x + h * 0.66, y + h / 2, h * 0.085);
+  ctx.restore();
+}
+function drawCover(ctx, img, x, y, w, h) {               // fill w×h with img, cropping (never stretching)
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height, k = Math.max(w / iw, h / ih), sw = w / k, sh = h / k;
+  ctx.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, x, y, w, h);
+}
+/** "Camera Tab" template: separate map tile on the left, dark info card, flag, and a small tab above the card. */
+function drawCamOverlay(ctx, W, H, L) {
+  const s = state.style, d = state.data, u = W / 1000, ll = getLL();
+  const fs = s.size * u, pad = s.padding * u, margin = s.margin * u, gap = fs * 0.4;
+  const totalW = Math.min(W - 2 * margin, W * s.width / 100);
+  const thumb = s.showMap ? Thumb.get('square') : null;
+  const coords = ll ? `Lat ${ll.lat.toFixed(s.precision)}° Long ${ll.lng.toFixed(s.precision)}°` : '';
+  let dt = '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d.date)) {
+    const [y, m, da] = d.date.split('-').map(Number), dow = DOW[new Date(Date.UTC(y, m - 1, da)).getUTCDay()];
+    const dtext = s.dateFormat === 'mdy' ? `${String(m).padStart(2, '0')}/${String(da).padStart(2, '0')}/${y}` : fmtDate(d.date);
+    dt = (s.dateFormat === 'long' ? '' : dow + ', ') + dtext;
+  }
+  dt = [dt, fmtTime(d.time), d.date || d.time ? tzLabel().replace('UTC', 'GMT ') : ''].filter(Boolean).join(' ');
+  const flagH = fs * 0.95, flagW = flagH * 1.9;
+
+  const layout = colW => {
+    const rows = []; let y = 0;
+    const add = (text, size, weight, alpha, italic) => {
+      if (!text) return; const font = `${italic ? 'italic ' : ''}${weight} ${size}px ${s.font}`; ctx.font = font;
+      const lines = wrapText(ctx, text, colW), lh = size * s.lineSpacing;
+      rows.push({ lines, font, size, y, lh, alpha }); y += lines.length * lh + size * 0.18;
+    };
+    add(L.title, fs * 1.45, 700, 1);
+    if (s.showFlag) { rows.push({ flag: true, y }); y += flagH + fs * 0.25; }
+    add(L.addr, fs * 0.85, 400, .95); add(L.activity, fs * 0.85, 600, .95); add(L.org, fs * 0.85, 400, .85);
+    add(coords, fs * 0.9, 400, .95); add(dt, fs * 0.9, 400, .95); add(L.tag, fs * 0.56, 400, .7, true);
+    return { rows, h: Math.max(0, y - fs * 0.18) };
+  };
+  let T = thumb ? totalW * 0.26 : 0, lay, cardW, cardH;
+  for (let i = 0; i < 5; i++) {
+    cardW = totalW - (T ? T + gap : 0); lay = layout(cardW - 2 * pad); cardH = lay.h + 2 * pad;
+    const nt = thumb ? Math.min(cardH, totalW * 0.4) : 0; if (Math.abs(nt - T) < 1) break; T = nt;
+  }
+  // tab
+  const tabText = (s.tabText || '').trim(), showTab = s.showTab && tabText;
+  const logo = s.logoOn && state.logo ? state.logo : null;
+  let tabH = 0, tabW = 0, tw = 0; const tfs = fs * 0.78;
+  if (showTab) { ctx.font = `700 ${tfs}px ${s.font}`; tw = ctx.measureText(tabText).width; tabH = fs * 1.75; tabW = tabH * 0.18 + tabH * 0.72 + fs * 0.35 + tw + tabH * 0.3; }
+  const tabGap = showTab ? fs * 0.18 : 0, totalH = tabH + tabGap + cardH;
+
+  let x, y;
+  if (s.custom) { x = clamp(s.custom.x * W, 0, Math.max(0, W - totalW)); y = clamp(s.custom.y * H, 0, Math.max(0, H - totalH)); }
+  else { x = s.pos.includes('left') ? margin : W - totalW - margin; y = s.pos.includes('top') ? margin : H - totalH - margin; }
+  const cx = x + (T ? T + gap : 0), cy = y + tabH + tabGap, rad = s.radius * u;
+
+  ctx.save();
+  const panel = (px, py, pw, ph, r) => { roundRectPath(ctx, px, py, pw, ph, r); ctx.globalAlpha = s.opacity / 100; ctx.fillStyle = s.bg; ctx.fill(); ctx.globalAlpha = 1; };
+  panel(cx, cy, cardW, cardH, rad);
+  if (thumb && T) { ctx.save(); roundRectPath(ctx, x, cy, T, cardH, rad); ctx.clip(); drawCover(ctx, thumb, x, cy, T, cardH); ctx.restore(); }
+  if (showTab) {
+    const tx = cx + cardW - tabW, ty = y;
+    panel(tx, ty, tabW, tabH, Math.min(rad, tabH * 0.3));
+    const is = tabH * 0.72, ix = tx + tabH * 0.18, iy = ty + (tabH - is) / 2;
+    if (logo) { const k = Math.min(is / (logo.img.naturalWidth || 1), is / (logo.img.naturalHeight || 1)), lw = (logo.img.naturalWidth || 1) * k, lh = (logo.img.naturalHeight || 1) * k; ctx.drawImage(logo.img, ix + (is - lw) / 2, iy + (is - lh) / 2, lw, lh); }
+    else { roundRectPath(ctx, ix, iy, is, is, is * 0.25); ctx.fillStyle = '#2f80ed'; ctx.fill(); drawIcon(ctx, 'pin', ix + is / 2, iy + is / 2, is * 0.8, '#fff'); }
+    ctx.fillStyle = s.color; ctx.textBaseline = 'middle'; ctx.font = `700 ${tfs}px ${s.font}`; ctx.fillText(tabText, ix + is + fs * 0.35, ty + tabH / 2 + tfs * 0.04);
+  }
+  ctx.textBaseline = 'middle'; ctx.fillStyle = s.color;
+  const top = cy + pad + (cardH - 2 * pad - lay.h) / 2;
+  lay.rows.forEach(r => {
+    if (r.flag) { drawFlag(ctx, cx + pad, top + r.y, flagW, flagH); return; }
+    ctx.font = r.font; ctx.globalAlpha = r.alpha;
+    r.lines.forEach((ln, i) => ctx.fillText(ln, cx + pad, top + r.y + (i + 0.5) * r.lh));
+  });
+  ctx.globalAlpha = 1; ctx.restore();
+  return { x: x / W, y: y / H, w: totalW / W, h: totalH / H };
+}
+
 /** Draws the selected template. Returns the card rectangle in 0..1 image coordinates (or null). */
 function drawOverlay(ctx, W, H) {
   const s = state.style, L = buildContent();
   if (!(L.title || L.addr || L.activity || L.org || L.dt || L.coords)) return null;
+  if (s.template === 'cam') return drawCamOverlay(ctx, W, H, L);
   const u = W / 1000, tpl = s.template, minimal = tpl === 'minimal';
   const fs = s.size * u * (minimal ? 0.92 : 1), pad = s.padding * u * (minimal ? 0.75 : 1), margin = s.margin * u;
   let cardW = Math.min(W - 2 * margin, W * s.width / 100);
@@ -1146,6 +1266,8 @@ const sel = (k, l, o) => `<label class="fld"><span>${l}</span><select data-k="${
 const chk = (k, l) => `<label class="chk"><input type="checkbox" data-k="${k}"> ${l}</label>`;
 const col = (k, l) => `<label class="fld"><span>${l}</span><input type="color" data-k="${k}"></label>`;
 $('#styleBody').innerHTML =
+  `<label class="fld"><span>Tab label (Camera Tab template)</span><input type="text" data-k="style.tabText" maxlength="40" autocomplete="off"></label>` +
+  `<div class="row2">${chk('style.showTab', 'Show tab')}${chk('style.showFlag', 'Philippine flag')}</div>` +
   sel('style.font', 'Font', [[DEFAULT_STYLE.font, 'System sans'], ["Arial, Helvetica, sans-serif", 'Arial'], ["Verdana, Geneva, sans-serif", 'Verdana'], ["'Trebuchet MS', sans-serif", 'Trebuchet'], ["Georgia, serif", 'Georgia'], ["'Courier New', monospace", 'Courier New']]) +
   rng('style.size', 'Font size', 12, 44, 1) + `<div class="row2">${col('style.color', 'Text color')}${col('style.bg', 'Background color')}</div>` +
   rng('style.opacity', 'Background opacity', 0, 100, 1, '%') + rng('style.radius', 'Corner radius', 0, 60, 1) +
@@ -1181,6 +1303,7 @@ function syncUI() {
   $$('.pos button').forEach(b => b.setAttribute('aria-pressed', !state.style.custom && b.dataset.pos === state.style.pos));
   const has = !!state.img;
   ['exportBtn', 'exportBtn2', 'dlOriginal'].forEach(id => $('#' + id).disabled = !has);
+  $('#docAdd').disabled = !has || docItems.length >= MAX_DOC_PHOTOS;
   $('#exifBtn').disabled = !(state.exif && !state.exif.none);
   $('#logoRemove').disabled = !state.logo;
   $('#mapTypeBtn').setAttribute('aria-pressed', state.style.mapType !== 'roadmap');
@@ -1317,6 +1440,95 @@ $('#expDownload').onclick = () => { if (expUrl) downloadBlobUrl(expUrl, expName)
 $('#expClose').onclick = () => $('#exportDlg').close();
 $('#exportDlg').addEventListener('close', closeExportUrl);
 $('#dlOriginal').onclick = () => { if (!state.file) return; const u = URL.createObjectURL(state.file); downloadBlobUrl(u, state.file.name); setTimeout(() => URL.revokeObjectURL(u), 4000); };
+
+/* ---- Word document (A4) ---- */
+const MAX_DOC_PHOTOS = 5;
+const docItems = [];                                  // {buf, url, w, h, label}
+async function renderForDoc() {
+  await Thumb.flush();
+  const base = Base.get(), k = Math.min(1, 1800 / Math.max(base.width, base.height));
+  const W = Math.max(1, Math.round(base.width * k)), H = Math.max(1, Math.round(base.height * k));
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+  paintComposite(ctx, base, W, H, true);
+  const blob = await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('blob')), 'image/jpeg', 0.9));
+  return { blob, buf: new Uint8Array(await blob.arrayBuffer()), w: W, h: H };
+}
+function renderDocList() {
+  const box = $('#docList'); box.innerHTML = '';
+  docItems.forEach((it, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:6px;background:var(--glass)';
+    const im = document.createElement('img'); im.src = it.url; im.alt = ''; im.style.cssText = 'width:54px;height:40px;object-fit:cover;border-radius:6px';
+    const t = document.createElement('div'); t.style.cssText = 'flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'; t.textContent = `${i + 1}. ${it.label}`;
+    const mk = (txt, title, fn, dis) => { const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = txt; b.title = title; b.setAttribute('aria-label', title); b.disabled = !!dis; b.onclick = fn; return b; };
+    row.append(im, t,
+      mk('↑', 'Move up', () => { [docItems[i - 1], docItems[i]] = [docItems[i], docItems[i - 1]]; renderDocList(); }, i === 0),
+      mk('↓', 'Move down', () => { [docItems[i + 1], docItems[i]] = [docItems[i], docItems[i + 1]]; renderDocList(); }, i === docItems.length - 1),
+      mk('✕', 'Remove', () => { URL.revokeObjectURL(it.url); docItems.splice(i, 1); renderDocList(); }));
+    box.appendChild(row);
+  });
+  $('#docCount').textContent = `${docItems.length} / ${MAX_DOC_PHOTOS} photos`;
+  $('#docAdd').disabled = !state.img || docItems.length >= MAX_DOC_PHOTOS;
+  $('#docGen').disabled = docItems.length === 0;
+}
+$('#docAdd').onclick = async () => {
+  if (!state.img) return;
+  if (docItems.length >= MAX_DOC_PHOTOS) { toast('A document can hold at most 5 photos.', 'warn'); return; }
+  if (!state.rect && !confirm('The overlay is empty (no location details). Add the photo anyway?')) return;
+  loading(true, 'Adding photo…');
+  try {
+    const r = await renderForDoc();
+    docItems.push({ buf: r.buf, url: URL.createObjectURL(r.blob), w: r.w, h: r.h, label: state.file ? state.file.name : 'Photo' });
+    renderDocList(); toast('Photo added to the Word document.', 'ok', 2500);
+  } catch { toast('Could not add this photo (it may be too large for this browser).', 'error'); }
+  finally { loading(false); }
+};
+$('#docHead').onchange = () => { $('#docHeadFields').hidden = !$('#docHead').checked; };
+$('#docGen').onclick = async () => {
+  const D = window.docx;
+  if (!D) { toast('The Word library could not load (offline?). Connect to the internet and reload.', 'error', 7000); return; }
+  if (!docItems.length) return;
+  loading(true, 'Building Word document…');
+  try {
+    const per = Number($('#docPer').value);
+    let cols = $('#docCols').value === 'auto' ? (per <= 3 ? 1 : 2) : Number($('#docCols').value); cols = Math.min(cols, per);
+    const rowsCfg = Math.ceil(per / cols);
+    const h1 = $('#docH1').value.trim(), h2 = $('#docH2').value.trim(), showHead = $('#docHead').checked && (h1 || h2);
+    const PW = 11906, PH = 16838, M = 720, contentW = PW - 2 * M, contentH = PH - 2 * M;   // A4 in twips, 0.5" margins
+    const bodyH = contentH - (showHead ? 1500 : 0) - 300 - 450;                              // heading, trailing paragraph, safety
+    const rowTw = Math.floor(bodyH / rowsCfg), colTw = Math.floor(contentW / cols), pad = 100;
+    const boxW = (colTw - 2 * pad) / 15, boxH = (rowTw - 2 * pad) / 15;                      // twips → px (96 dpi)
+    const none = { style: D.BorderStyle.NONE, size: 0, color: 'FFFFFF' }, nb = { top: none, bottom: none, left: none, right: none };
+    const sections = [];
+    for (let p = 0; p < docItems.length; p += per) {
+      const chunk = docItems.slice(p, p + per), kids = [];
+      if (showHead) [h1, h2].filter(Boolean).forEach((t, i, a) => kids.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, spacing: { after: i === a.length - 1 ? 160 : 0 }, children: [new D.TextRun({ text: t, bold: true, size: 24, font: 'Arial' })] })));
+      const rows = [];
+      for (let r = 0; r < Math.ceil(chunk.length / cols); r++) {
+        const cells = [];
+        for (let c = 0; c < cols; c++) {
+          const it = chunk[r * cols + c]; let par;
+          if (it) {
+            const k = Math.min(boxW / it.w, boxH / it.h), w = Math.max(1, Math.floor(it.w * k)), h = Math.max(1, Math.floor(it.h * k));
+            par = new D.Paragraph({ alignment: D.AlignmentType.CENTER, children: [new D.ImageRun({ data: it.buf, type: 'jpg', transformation: { width: w, height: h } })] });
+          } else par = new D.Paragraph({ children: [] });
+          cells.push(new D.TableCell({ width: { size: colTw, type: D.WidthType.DXA }, verticalAlign: D.VerticalAlign.CENTER, borders: nb, margins: { top: pad, bottom: pad, left: pad, right: pad }, children: [par] }));
+        }
+        rows.push(new D.TableRow({ height: { value: rowTw, rule: D.HeightRule.EXACT }, cantSplit: true, children: cells }));
+      }
+      kids.push(new D.Table({ width: { size: colTw * cols, type: D.WidthType.DXA }, columnWidths: Array(cols).fill(colTw), layout: D.TableLayoutType.FIXED, borders: { ...nb, insideHorizontal: none, insideVertical: none }, rows }));
+      kids.push(new D.Paragraph({ spacing: { before: 0, after: 0, line: 20, lineRule: D.LineRuleType.EXACT }, children: [new D.TextRun({ text: '', size: 2 })] }));
+      sections.push({ properties: { page: { size: { width: PW, height: PH }, margin: { top: M, bottom: M, left: M, right: M } } }, children: kids });
+    }
+    const doc = new D.Document({ creator: 'Geotag Studio', title: 'Photo documentation', sections });
+    const blob = await D.Packer.toBlob(doc), url = URL.createObjectURL(blob);
+    downloadBlobUrl(url, 'Photo_Documentation.docx'); setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast(`Word document created: ${docItems.length} photo${docItems.length > 1 ? 's' : ''}, ${Math.ceil(docItems.length / per)} page${Math.ceil(docItems.length / per) > 1 ? 's' : ''}.`, 'ok');
+  } catch (e) { toast('Could not build the Word document. Try fewer or smaller photos.', 'error', 7000); }
+  finally { loading(false); }
+};
+window.addEventListener('beforeunload', () => docItems.forEach(i => URL.revokeObjectURL(i.url)));
 
 // header buttons & keyboard
 $('#undoBtn').onclick = () => History.undo(); $('#redoBtn').onclick = () => History.redo();
