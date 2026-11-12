@@ -52,6 +52,7 @@ button,input,select{font:inherit;color:inherit}
 #canvasWrap{position:relative;margin:auto;flex:none;box-shadow:0 12px 50px #000a;border-radius:6px;overflow:visible}
 #view{display:block;border-radius:6px;background:#000}
 #box{position:absolute;border:2px dashed #7db2ff;border-radius:8px;cursor:move;touch-action:none;box-shadow:0 0 0 1px #0006}
+#rh{position:absolute;right:-10px;bottom:-10px;width:20px;height:20px;border-radius:50%;background:#2563eb;border:2px solid #fff;cursor:nwse-resize;touch-action:none;box-shadow:0 2px 8px #0008}
 #box::after{content:"drag to move";position:absolute;top:-22px;left:0;font-size:11px;background:#2563eb;padding:1px 7px;border-radius:6px;opacity:0;transition:.15s;pointer-events:none;white-space:nowrap}
 #box:hover::after,#box:focus-visible::after{opacity:1}
 #empty{margin:auto;text-align:center;max-width:460px;padding:36px 28px;border:2px dashed #ffffff40;border-radius:20px;background:#ffffff08}
@@ -63,6 +64,11 @@ button,input,select{font:inherit;color:inherit}
 .spin{width:38px;height:38px;border-radius:50%;border:4px solid #ffffff30;border-top-color:var(--blue2);animation:sp .8s linear infinite;margin:0 auto 10px}
 @keyframes sp{to{transform:rotate(360deg)}}
 .status{padding:8px 14px;border-top:1px solid var(--line);color:var(--muted);font-size:13px;display:flex;gap:10px;flex-wrap:wrap}
+.tabs{position:sticky;top:0;z-index:6;display:flex;gap:4px;padding:8px;margin:-6px -6px 4px;overflow-x:auto;background:#0d1b3ccc;backdrop-filter:blur(14px);border-bottom:1px solid var(--line);border-radius:var(--r) var(--r) 0 0;scrollbar-width:thin}
+.tabs button{flex:none;background:transparent;border:1px solid transparent;border-radius:10px;padding:7px 12px;cursor:pointer;color:var(--muted);white-space:nowrap;transition:.15s}
+.tabs button:hover{color:var(--text);background:var(--glass2)}
+.tabs button[aria-selected=true]{color:#fff;background:#2563eb;border-color:#7db2ff}
+details.sec[data-hidden]{display:none}
 details.sec{border-bottom:1px solid var(--line);padding:0 12px}
 details.sec:last-child{border:0}
 details.sec>summary{cursor:pointer;list-style:none;padding:13px 2px;font-weight:650;display:flex;align-items:center;gap:8px}
@@ -120,6 +126,7 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
   .grid{grid-template-columns:1fr;height:auto}
   .workspace{min-height:70dvh}
   .controls{overflow:visible}
+  .tabs{top:63px}
   .btn,input,select{min-height:44px}
   .btn.sm{min-height:36px}
   .row3{grid-template-columns:1fr 1fr}
@@ -161,6 +168,7 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
       <span class="sep"></span>
       <button class="btn sm" id="cmpBtn" aria-pressed="false" title="Toggle between the edited preview and the photo without the overlay">Before / After</button>
       <span class="spacer"></span>
+      <button class="btn sm" id="docAddTop" disabled title="Add the photo shown here, with its overlay, to the Word document">＋ Word <span id="docTopCount">0/5</span></button>
       <button class="btn primary sm" id="exportBtn" disabled title="Preview and download the finished image">Export…</button>
     </div>
 
@@ -185,7 +193,7 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
       </div>
       <div id="canvasWrap" hidden>
         <canvas id="view" aria-label="Photo preview with geotag overlay"></canvas>
-        <div id="box" tabindex="0" role="application" aria-label="Overlay position. Use arrow keys to move." hidden></div>
+        <div id="box" tabindex="0" role="application" aria-label="Overlay position. Use arrow keys to move." hidden><span id="rh" title="Drag to resize the overlay"></span></div>
       </div>
       <div class="loading" id="loading" role="status"><div><div class="spin"></div><span id="loadingText">Working…</span></div></div>
     </div>
@@ -194,8 +202,16 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
 
   <!-- ============================ RIGHT: controls ============================ -->
   <aside class="panel controls" aria-label="Editing controls">
+    <nav class="tabs" role="tablist" aria-label="Editing sections">
+      <button role="tab" data-go="details" aria-selected="true">📍 Details</button>
+      <button role="tab" data-go="map" aria-selected="false">🗺 Map</button>
+      <button role="tab" data-go="overlay" aria-selected="false">🪪 Overlay</button>
+      <button role="tab" data-go="style" aria-selected="false">🎨 Style</button>
+      <button role="tab" data-go="word" aria-selected="false">📄 Word</button>
+      <button role="tab" data-go="export" aria-selected="false">💾 Export</button>
+    </nav>
 
-    <details class="sec" open>
+    <details class="sec" open data-tab="details">
       <summary>📍 Location details</summary>
       <div class="body">
         <label class="fld"><span>Location name <span class="badge" data-badge="name"></span></span><input type="text" data-k="data.name" placeholder="e.g. Poblacion, Kauswagan" autocomplete="off"></label>
@@ -216,7 +232,7 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
       </div>
     </details>
 
-    <details class="sec" open>
+    <details class="sec" open data-tab="details">
       <summary>🧭 Coordinates, date &amp; time</summary>
       <div class="body">
         <div class="row2">
@@ -244,7 +260,7 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
       </div>
     </details>
 
-    <details class="sec" open id="mapSec">
+    <details class="sec" open id="mapSec" data-tab="map">
       <summary>🗺 Map</summary>
       <div class="body">
         <div id="osmOn">
@@ -286,7 +302,7 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
       </div>
     </details>
 
-    <details class="sec" open>
+    <details class="sec" open data-tab="overlay">
       <summary>🪪 Overlay template &amp; position</summary>
       <div class="body">
         <div class="tpls" role="group" aria-label="Overlay template">
@@ -295,6 +311,7 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
           <button class="tpl" data-tpl="map" aria-pressed="false"><i></i>Map Card</button>
           <button class="tpl" data-tpl="minimal" aria-pressed="false"><i></i>Minimal</button>
         </div>
+        <label class="rng"><span>Overlay size <output data-unit="%"></output></span><input type="range" data-k="style.scale" min="40" max="200" step="1"></label>
         <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
           <div class="pos" role="group" aria-label="Overlay corner">
             <button data-pos="top-left" title="Top left" aria-label="Top left">↖</button>
@@ -307,12 +324,12 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
       </div>
     </details>
 
-    <details class="sec">
+    <details class="sec" open data-tab="style">
       <summary>🎨 Style &amp; text</summary>
       <div class="body" id="styleBody"></div>
     </details>
 
-    <details class="sec">
+    <details class="sec" open data-tab="style">
       <summary>🖼 Logo / secondary image</summary>
       <div class="body">
         <div class="btnrow">
@@ -327,7 +344,7 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
       </div>
     </details>
 
-    <details class="sec" open id="docSec">
+    <details class="sec" open id="docSec" data-tab="word">
       <summary>📄 Word document (A4)</summary>
       <div class="body">
         <label class="chk"><input type="checkbox" id="docHead" checked> Include 2-line heading on every page</label>
@@ -351,7 +368,7 @@ dialog::backdrop{background:#030814bb;backdrop-filter:blur(3px)}
       </div>
     </details>
 
-    <details class="sec" open>
+    <details class="sec" open data-tab="export">
       <summary>💾 Export</summary>
       <div class="body">
         <div class="row3">
@@ -442,7 +459,7 @@ function loading(on, text) { $('#loading').classList.toggle('on', on); if (text)
    ========================================================================== */
 const DEFAULT_STYLE = {
   template: 'cam', pos: 'bottom-left', custom: null,
-  tabText: 'Geotag Camera', showTab: true, showFlag: true,
+  tabText: 'Geotag Camera', showTab: true, showFlag: true, scale: 100,
   font: "system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif",
   size: 22, color: '#ffffff', bg: '#1c1e21', opacity: 82, radius: 12, padding: 20,
   lineSpacing: 1.3, width: 92, margin: 14,
@@ -812,9 +829,9 @@ function drawCover(ctx, img, x, y, w, h) {               // fill w×h with img, 
 }
 /** "Camera Tab" template: separate map tile on the left, dark info card, flag, and a small tab above the card. */
 function drawCamOverlay(ctx, W, H, L) {
-  const s = state.style, d = state.data, u = W / 1000, ll = getLL();
-  const fs = s.size * u, pad = s.padding * u, margin = s.margin * u, gap = fs * 0.4;
-  const totalW = Math.min(W - 2 * margin, W * s.width / 100);
+  const s = state.style, d = state.data, sc = s.scale / 100, u = W / 1000 * sc, ll = getLL();
+  const fs = s.size * u, pad = s.padding * u, margin = s.margin * W / 1000, gap = fs * 0.4;
+  const totalW = Math.min(W - 2 * margin, W * s.width / 100 * sc);
   const thumb = s.showMap ? Thumb.get('square') : null;
   const coords = ll ? `Lat ${ll.lat.toFixed(s.precision)}° Long ${ll.lng.toFixed(s.precision)}°` : '';
   let dt = '';
@@ -884,9 +901,9 @@ function drawOverlay(ctx, W, H) {
   const s = state.style, L = buildContent();
   if (!(L.title || L.addr || L.activity || L.org || L.dt || L.coords)) return null;
   if (s.template === 'cam') return drawCamOverlay(ctx, W, H, L);
-  const u = W / 1000, tpl = s.template, minimal = tpl === 'minimal';
-  const fs = s.size * u * (minimal ? 0.92 : 1), pad = s.padding * u * (minimal ? 0.75 : 1), margin = s.margin * u;
-  let cardW = Math.min(W - 2 * margin, W * s.width / 100);
+  const sc = s.scale / 100, u = W / 1000 * sc, tpl = s.template, minimal = tpl === 'minimal';
+  const fs = s.size * u * (minimal ? 0.92 : 1), pad = s.padding * u * (minimal ? 0.75 : 1), margin = s.margin * W / 1000;
+  let cardW = Math.min(W - 2 * margin, W * s.width / 100 * sc);
   const thumb = !minimal && s.showMap ? Thumb.get(tpl === 'map' ? 'wide' : 'square') : null;
   const logo = s.logoOn && state.logo ? state.logo : null;
   const logoW = logo ? Math.min(cardW * s.logoSize / 100, cardW * 0.4) : 0, logoH = logo ? logoW * logo.ratio : 0;
@@ -1303,7 +1320,7 @@ function syncUI() {
   $$('.pos button').forEach(b => b.setAttribute('aria-pressed', !state.style.custom && b.dataset.pos === state.style.pos));
   const has = !!state.img;
   ['exportBtn', 'exportBtn2', 'dlOriginal'].forEach(id => $('#' + id).disabled = !has);
-  $('#docAdd').disabled = !has || docItems.length >= MAX_DOC_PHOTOS;
+  $('#docAdd').disabled = $('#docAddTop').disabled = !has || docItems.length >= MAX_DOC_PHOTOS;
   $('#exifBtn').disabled = !(state.exif && !state.exif.none);
   $('#logoRemove').disabled = !state.logo;
   $('#mapTypeBtn').setAttribute('aria-pressed', state.style.mapType !== 'roadmap');
@@ -1365,6 +1382,21 @@ $$('.pos button').forEach(b => b.onclick = () => { state.style.pos = b.dataset.p
   });
   const end = () => { if (drag) { drag = null; syncUI(); History.commit(); } };
   box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
+  // resize handle: dragging the blue dot scales the whole overlay (text, map, padding) from its top-left corner
+  const rh = $('#rh'); let rs = null;
+  rh.addEventListener('pointerdown', e => {
+    e.stopPropagation(); if (!state.rect) return; rh.setPointerCapture(e.pointerId);
+    rs = { sx: e.clientX, sc: state.style.scale, w: state.rect.w };
+    if (!state.style.custom) state.style.custom = { x: state.rect.x, y: state.rect.y };
+  });
+  rh.addEventListener('pointermove', e => {
+    if (!rs) return; const r = $('#view').getBoundingClientRect();
+    state.style.scale = clamp(Math.round(rs.sc * (rs.w + (e.clientX - rs.sx) / r.width) / rs.w), 40, 200);
+    $$('[data-k="style.scale"]').forEach(el => { el.value = state.style.scale; const o = el.closest('label').querySelector('output'); if (o) o.textContent = el.value + '%'; });
+    render();
+  });
+  const rEnd = () => { if (rs) { rs = null; syncUI(); History.commit(); } };
+  rh.addEventListener('pointerup', rEnd); rh.addEventListener('pointercancel', rEnd);
   box.addEventListener('keydown', e => {
     const step = e.shiftKey ? 0.05 : 0.01, m = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
     if (!m || !state.rect) return; e.preventDefault();
@@ -1391,7 +1423,7 @@ $('#useDevice').onclick = () => {
   }, err => { loading(false); toast(err.code === 1 ? 'Location permission was denied.' : 'Could not get your location.', 'warn'); }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
 };
 $('#goSearch').onclick = () => {
-  $('#mapSec').open = true; $('#mapSec').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  showTab('map');
   if (!MapMod.ready) { $('#osmSearch').focus(); return; }
   (MapMod.pac || $('#mapSearch')).focus();
 };
@@ -1469,10 +1501,11 @@ function renderDocList() {
     box.appendChild(row);
   });
   $('#docCount').textContent = `${docItems.length} / ${MAX_DOC_PHOTOS} photos`;
-  $('#docAdd').disabled = !state.img || docItems.length >= MAX_DOC_PHOTOS;
+  $('#docAdd').disabled = $('#docAddTop').disabled = !state.img || docItems.length >= MAX_DOC_PHOTOS;
+  $('#docTopCount').textContent = `${docItems.length}/${MAX_DOC_PHOTOS}`;
   $('#docGen').disabled = docItems.length === 0;
 }
-$('#docAdd').onclick = async () => {
+async function addCurrentToDoc() {
   if (!state.img) return;
   if (docItems.length >= MAX_DOC_PHOTOS) { toast('A document can hold at most 5 photos.', 'warn'); return; }
   if (!state.rect && !confirm('The overlay is empty (no location details). Add the photo anyway?')) return;
@@ -1483,7 +1516,8 @@ $('#docAdd').onclick = async () => {
     renderDocList(); toast('Photo added to the Word document.', 'ok', 2500);
   } catch { toast('Could not add this photo (it may be too large for this browser).', 'error'); }
   finally { loading(false); }
-};
+}
+$('#docAdd').onclick = addCurrentToDoc; $('#docAddTop').onclick = addCurrentToDoc;
 $('#docHead').onchange = () => { $('#docHeadFields').hidden = !$('#docHead').checked; };
 $('#docGen').onclick = async () => {
   const D = window.docx;
@@ -1529,6 +1563,25 @@ $('#docGen').onclick = async () => {
   finally { loading(false); }
 };
 window.addEventListener('beforeunload', () => docItems.forEach(i => URL.revokeObjectURL(i.url)));
+
+/* ---- navigation tabs for the editing panel ---- */
+function showTab(name) {
+  $$('.tabs [data-go]').forEach(b => b.setAttribute('aria-selected', b.dataset.go === name));
+  $$('details.sec[data-tab]').forEach(d => { if (d.dataset.tab === name) d.removeAttribute('data-hidden'); else d.setAttribute('data-hidden', ''); });
+  try { sessionStorage.setItem('geotag.tab', name); } catch {}
+  if (name === 'map') setTimeout(() => {
+    if (MapMod.ready && window.google) google.maps.event.trigger(MapMod.map, 'resize');
+    if (OsmMod.ready) OsmMod.map.invalidateSize();
+  }, 50);
+}
+$$('.tabs [data-go]').forEach(b => { b.onclick = () => showTab(b.dataset.go); });
+$('.tabs').addEventListener('keydown', e => {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  const t = $$('.tabs [data-go]'), i = t.findIndex(b => b.getAttribute('aria-selected') === 'true'), n = t[(i + (e.key === 'ArrowRight' ? 1 : t.length - 1)) % t.length];
+  n.focus(); showTab(n.dataset.go);
+});
+let _t0 = 'details'; try { _t0 = sessionStorage.getItem('geotag.tab') || 'details'; } catch {}
+showTab(_t0);
 
 // header buttons & keyboard
 $('#undoBtn').onclick = () => History.undo(); $('#redoBtn').onclick = () => History.redo();
